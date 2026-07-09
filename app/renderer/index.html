@@ -1,0 +1,152 @@
+<meta charset="utf-8" />
+<meta
+  http-equiv="Content-Security-Policy"
+  content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'"
+/>
+<title>Folder Archiver</title>
+<link rel="stylesheet" href="style.css" />
+
+<div id="app">
+  <header class="topbar">
+    <div class="topbar-title">
+      <h1>Folder Archiver</h1>
+      <span id="refresh-note" class="refresh-note"></span>
+    </div>
+    <div class="topbar-actions">
+      <button id="btn-open-logs" class="btn btn-secondary">Open Log Folder</button>
+      <button id="btn-new" class="btn btn-primary">New Job</button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner hidden"></div>
+
+  <main class="content">
+    <!-- Job table -->
+    <section id="table-wrap" class="table-wrap">
+      <table class="jobs">
+        <thead>
+          <tr>
+            <th>Label</th>
+            <th>Schedule</th>
+            <th class="col-keep">Keep</th>
+            <th>Status</th>
+            <th>Last Run</th>
+          </tr>
+        </thead>
+        <tbody id="jobs-body"></tbody>
+      </table>
+    </section>
+
+    <!-- Empty state -->
+    <section id="empty-state" class="empty-state hidden">
+      <p class="empty-title">No archive jobs yet</p>
+      <p class="empty-sub">Create one to start zipping a folder on a schedule.</p>
+      <button id="btn-new-empty" class="btn btn-primary">New Archive Job…</button>
+    </section>
+
+    <!-- Detail pane -->
+    <section id="detail" class="detail hidden"></section>
+  </main>
+</div>
+
+<!-- New Job modal -->
+<div id="modal-new" class="modal-overlay hidden">
+  <div class="modal modal-picker">
+    <h2>New Archive Job</h2>
+    <div id="new-error" class="form-error hidden"></div>
+
+    <div class="picker">
+      <div class="picker-col">
+        <div class="picker-head">Source</div>
+        <div id="zone-source" class="zone"></div>
+      </div>
+      <div class="picker-col">
+        <div class="picker-head">Destination</div>
+        <div id="zone-dest" class="zone"></div>
+      </div>
+    </div>
+    <div class="picker-hint">Drag folders from Finder into either box, or click +.</div>
+
+    <label class="field">
+      <span class="field-label">Archive name</span>
+      <input id="in-label" type="text" placeholder="Folder name" spellcheck="false" />
+      <div id="name-preview" class="name-preview"></div>
+    </label>
+
+    <label class="field">
+      <span class="field-label">Archives will be saved to</span>
+      <input id="in-dest" type="text" class="dest-input" placeholder="Choose a destination" spellcheck="false" />
+    </label>
+
+    <div class="field-row">
+      <label class="field field-grow">
+        <span class="field-label">Schedule</span>
+        <select id="in-schedule">
+          <option value="15m">Every 15 minutes</option>
+          <option value="30m">Every 30 minutes</option>
+          <option value="1h" selected>Every hour</option>
+          <option value="2h">Every 2 hours</option>
+          <option value="4h">Every 4 hours</option>
+          <option value="daily">Daily at a set time…</option>
+          <option value="weekly">Weekly on a day…</option>
+          <option value="monthly">Monthly on a day…</option>
+        </select>
+      </label>
+
+      <label class="field col-day-field" id="weekday-wrap" style="display: none">
+        <span class="field-label">Day</span>
+        <select id="in-weekday">
+          <option value="1">Monday</option>
+          <option value="2">Tuesday</option>
+          <option value="3">Wednesday</option>
+          <option value="4">Thursday</option>
+          <option value="5">Friday</option>
+          <option value="6">Saturday</option>
+          <option value="0">Sunday</option>
+        </select>
+      </label>
+
+      <label class="field col-day-field" id="monthday-wrap" style="display: none">
+        <span class="field-label">Day</span>
+        <select id="in-monthday"></select>
+      </label>
+
+      <label class="field col-time-field" id="daily-time-wrap" style="display: none">
+        <span class="field-label">Time</span>
+        <input id="in-time" type="time" value="03:00" />
+      </label>
+
+      <label class="field col-keep-field">
+        <span class="field-label">Keep newest</span>
+        <input id="in-keep" type="number" min="1" step="1" value="10" />
+      </label>
+    </div>
+
+    <label class="checkbox-field">
+      <input id="in-unchanged" type="checkbox" />
+      <span>Archive even when nothing in the folder changed</span>
+    </label>
+
+    <div class="modal-actions">
+      <button id="btn-new-cancel" class="btn btn-secondary">Cancel</button>
+      <button id="btn-new-create" class="btn btn-primary">Create Job</button>
+    </div>
+  </div>
+</div>
+
+<!-- Log viewer modal -->
+<div id="modal-log" class="modal-overlay hidden">
+  <div class="modal modal-wide">
+    <h2 id="log-title">Log</h2>
+    <pre id="log-body" class="log-body"></pre>
+    <div class="modal-actions">
+      <button id="btn-log-refresh" class="btn btn-secondary">Refresh</button>
+      <button id="btn-log-openfolder" class="btn btn-secondary">Open Log Folder</button>
+      <button id="btn-log-close" class="btn btn-primary">Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="renderer.js"></script>

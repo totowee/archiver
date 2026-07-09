@@ -1,0 +1,13 @@
+# Build outputs — rebuild with ./build-app.sh
+Folder Archiver.app/
+dist/
+
+# Dependencies (restored by npm install, which build-app.sh runs)
+app/node_modules/
+
+# macOS noise
+.DS_Store
+
+# Python bytecode
+__pycache__/
+*.pyc

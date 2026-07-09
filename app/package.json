@@ -1,0 +1,14 @@
+{
+  "name": "folder-archiver-gui",
+  "productName": "Folder Archiver",
+  "version": "2.0.0",
+  "description": "GUI for Folder Archiver — zip a folder on a schedule, keep only the newest N zips",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "@electron/packager": "^18.3.0"
+  }
+}
