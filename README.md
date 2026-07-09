@@ -5,8 +5,11 @@ ones are deleted automatically. Runs in the background via macOS launchd, so it
 keeps archiving with no app or browser open. Pause, resume, or delete a job any
 time.
 
-The app bundle isn't committed — build it locally with `./build-app.sh`
-(see Development below).
+**Get the app**: download `Folder.Archiver-…-mac-arm64.zip` from the
+[Releases page](https://github.com/totowee/archiver/releases) (first launch:
+right-click → Open, since the build is ad-hoc signed), or build it locally
+with `./build-app.sh` (see Development below). The bundle itself isn't
+committed to the repo.
 
 ## Quick start
 
