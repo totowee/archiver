@@ -78,6 +78,16 @@
       <input id="in-dest" type="text" class="dest-input" placeholder="Choose a destination" spellcheck="false" />
     </label>
 
+    <label class="field">
+      <span class="field-label">Exclude patterns</span>
+      <input id="in-excludes" type="text" class="dest-input" spellcheck="false"
+             value="*.log *.lck ._* SearchData WaveformCache" />
+      <div class="field-hint">
+        Files and folders matching these names are left out of the archive (space-separated —
+        clear the field to archive everything).
+      </div>
+    </label>
+
     <div class="field-row">
       <label class="field field-grow">
         <span class="field-label">Schedule</span>

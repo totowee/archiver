@@ -20,9 +20,11 @@ committed to the repo.
    browse. The **archive name** (the `<Name>` in `YYYY-MM-DD HH.MM.SS <Name>.zip`) is
    editable and defaults to the folder's name, with a live filename preview;
    the destination path is editable too (it defaults to a `<Name> Archives`
-   folder). Pick a schedule (every 15 min / 30 min / 1 h / 2 h / 4 h — or
-   daily, weekly, or monthly at a set time) → set how many zips to keep
-   (default 10) → **Create Job**.
+   folder). **Exclude patterns** control what's left out of the archive — the
+   field comes prefilled for Avid projects (`*.log *.lck ._* SearchData
+   WaveformCache`); edit it or clear it to archive everything. Pick a schedule
+   (every 15 min / 30 min / 1 h / 2 h / 4 h — or daily, weekly, or monthly at
+   a set time) → set how many zips to keep (default 10) → **Create Job**.
    Dropping a folder anywhere on the main window also starts a new job with it
    as the source.
 3. A banner offers **Run Now** — macOS will ask for folder access the first time
@@ -61,6 +63,7 @@ the schedule lives in launchd, not in the app.
 ./folder-archiver.py add --source <folder> --dest <folder> --daily 03:00
 ./folder-archiver.py add --source <folder> --dest <folder> --weekly sun 03:00
 ./folder-archiver.py add --source <folder> --dest <folder> --monthly 1 03:00
+./folder-archiver.py add ... --exclude '*.lck' --exclude 'WaveformCache'
 ./folder-archiver.py list | status | run-now <slug> | pause <slug> | resume <slug>
 ./folder-archiver.py remove <slug> | log <slug> | doctor [--fix]
 ```
@@ -89,6 +92,11 @@ archive every time regardless.
   job's detail pane shows the fix and an **Open Privacy Settings** button:
   grant **Full Disk Access** to `/usr/bin/python3` (in the picker press ⇧⌘G
   and type the path), then **Run Now**. `doctor` flags this too.
+- **Exclude patterns** stage the run through the system `rsync` (filtered copy
+  next to the zip, then zipped, staging removed) — so those runs briefly need
+  about twice the source's filtered size free on the destination. Files that
+  vanish mid-copy (lock files on a live project) are tolerated. Changes to
+  excluded files don't count as "changes" for the skip-unchanged check.
 - An unmounted source (external drive) is skipped quietly and picked up again
   next time the drive is there.
 - Big folders: a lock prevents overlapping runs, and a run aborts safely if

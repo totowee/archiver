@@ -133,7 +133,7 @@ ipcMain.handle("jobs:list", async () => {
 
 ipcMain.handle("jobs:add", async (_evt, p) => {
   p = p || {};
-  const { source, dest, every, daily, weekly, monthly, keep, archiveUnchanged, label } = p;
+  const { source, dest, every, daily, weekly, monthly, keep, archiveUnchanged, label, excludes } = p;
   if (typeof source !== "string" || !source) return { ok: false, error: "missing source folder" };
   if (typeof dest !== "string" || !dest) return { ok: false, error: "missing destination folder" };
   const args = ["add", "--source", source, "--dest", dest];
@@ -141,6 +141,15 @@ ipcMain.handle("jobs:add", async (_evt, p) => {
     if (typeof label !== "string" || !label.trim()) return { ok: false, error: "invalid archive name" };
     // --label=… form so a name starting with "-" can't be read as a flag
     args.push("--label=" + label.trim());
+  }
+  if (excludes != null) {
+    if (!Array.isArray(excludes)) return { ok: false, error: "invalid exclude patterns" };
+    for (const pat of excludes) {
+      if (typeof pat !== "string" || !pat.trim() || pat.length > 200) {
+        return { ok: false, error: "invalid exclude pattern" };
+      }
+      args.push("--exclude=" + pat.trim()); // = form is dash-safe
+    }
   }
   if (every) {
     if (!EVERY_VALUES.has(every)) return { ok: false, error: "invalid interval preset" };

@@ -576,6 +576,12 @@ input[readonly] {
   color: var(--text-dim);
   margin-top: 4px;
 }
+.field-hint {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-top: 4px;
+  line-height: 1.5;
+}
 
 /* ---- log viewer ---- */
 .log-body {

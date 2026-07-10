@@ -20,6 +20,7 @@ Stdlib only.
 import argparse
 import datetime
 import fcntl
+import fnmatch
 import hashlib
 import json
 import os
@@ -442,11 +443,24 @@ def list_archives(dest, label):
     return [(ts, name) for ts, _, name in out]
 
 
-def scan_source(source):
+def scan_source(source, excludes=()):
     """One metadata-only walk: newest mtime (files AND dirs — dir mtimes catch
-    deletes/renames/copied-in-old-files), total apparent bytes, file count."""
+    deletes/renames/copied-in-old-files), total apparent bytes, file count.
+
+    excludes are basename fnmatch patterns (the same simple patterns the rsync
+    stage gets): matching files aren't counted and matching dirs aren't
+    entered, so churn inside an excluded cache dir neither triggers a new
+    archive nor inflates the size estimate. (Creating/deleting an excluded
+    file still bumps its parent dir's mtime — deletions of real files must
+    stay detectable, so dir mtimes always count.)
+    """
+    def excluded(name):
+        return any(fnmatch.fnmatch(name, p) for p in excludes)
+
     newest, total, count = 0.0, 0, 0
     for root, dirs, files in os.walk(source):
+        if excludes:
+            dirs[:] = [d for d in dirs if not excluded(d)]
         try:
             st = os.stat(root, follow_symlinks=False)
             if st.st_mtime > newest:
@@ -454,6 +468,8 @@ def scan_source(source):
         except OSError:
             pass
         for name in files:
+            if excludes and excluded(name):
+                continue
             try:
                 st = os.lstat(os.path.join(root, name))
             except OSError:
@@ -463,6 +479,18 @@ def scan_source(source):
             total += st.st_size
             count += 1
     return newest, total, count
+
+
+def tree_size(path):
+    """Apparent byte total of everything under path (0 if it doesn't exist)."""
+    total = 0
+    for root, dirs, files in os.walk(path):
+        for name in files:
+            try:
+                total += os.lstat(os.path.join(root, name)).st_size
+            except OSError:
+                pass
+    return total
 
 
 # ---------- the run itself ----------
@@ -552,8 +580,9 @@ def _run_job_locked(slug, job, out, finish, started):
         except OSError:
             pass  # unmounted volume etc. — the existing checks handle those
 
+    excludes = [e for e in job.get("excludes", []) if e]
     write_progress(slug, {"phase": "scanning"})
-    newest_mtime, total_bytes, file_count = scan_source(source)
+    newest_mtime, total_bytes, file_count = scan_source(source, excludes)
     existing = list_archives(dest, label)
 
     if job.get("skip_if_unchanged", True) and existing:
@@ -574,17 +603,21 @@ def _run_job_locked(slug, job, out, finish, started):
 
     reserve = int(os.environ.get("FOLDER_ARCHIVER_RESERVE_BYTES", DEFAULT_RESERVE))
     free = shutil.disk_usage(dest).free
-    if free < total_bytes + reserve:
+    # Excluded jobs stage a filtered copy next to the zip, so they briefly
+    # need roughly twice the source's (filtered) size.
+    need = total_bytes * (2 if excludes else 1)
+    if free < need + reserve:
         out(f"ERROR: not enough free space on destination "
-            f"(need ~{human_size(total_bytes)} + {human_size(reserve)} reserve, have {human_size(free)})")
+            f"(need ~{human_size(need)} + {human_size(reserve)} reserve, have {human_size(free)})")
         finish("error: insufficient free space")
         return 1
 
-    # Clear crash debris: our own .part / .part.err files older than a day.
-    # The time segment is optional so debris from the older date-only naming
-    # still gets cleaned up.
-    part_rx = re.compile(r"^\d{4}-\d{2}-\d{2}(?: \d{2}\.\d{2}\.\d{2})? %s(?: \(\d+\))?\.zip\.part(\.err)?$"
-                         % re.escape(label))
+    # Clear crash debris older than a day: our own .part / .part.err files and
+    # .staging dirs. The time segment is optional so debris from the older
+    # date-only naming still gets cleaned up.
+    part_rx = re.compile(
+        r"^\d{4}-\d{2}-\d{2}(?: \d{2}\.\d{2}\.\d{2})? %s(?: \(\d+\))?\.zip\.(?:part(?:\.err)?|staging)$"
+        % re.escape(label))
     try:
         debris = os.listdir(dest)
     except OSError:
@@ -594,7 +627,10 @@ def _run_job_locked(slug, job, out, finish, started):
             p = os.path.join(dest, n)
             try:
                 if time.time() - os.path.getmtime(p) > 86400:
-                    os.remove(p)
+                    if os.path.isdir(p):
+                        shutil.rmtree(p, ignore_errors=True)
+                    else:
+                        os.remove(p)
             except OSError:
                 pass
 
@@ -617,11 +653,65 @@ def _run_job_locked(slug, job, out, finish, started):
         final_name = f"{stamp} {label} ({max_n + 1}).zip"
     part = os.path.join(dest, final_name + ".part")
     final = os.path.join(dest, final_name)
+    err_path = part + ".err"
 
-    # Zip with live progress: ditto reports nothing, so watch the .part file
-    # grow and estimate the final size from the last run's compression ratio
-    # (1.0 on a first run — about right for media files; capped at 99% until
-    # the zip is really finished).
+    def err_tail():
+        try:
+            with open(err_path, "r") as f:
+                return " | ".join(f.read().strip().splitlines()[-3:])
+        except OSError:
+            return ""
+
+    # Phase 1 (only with exclude patterns): rsync a filtered copy of the
+    # source into a staging dir on the destination volume — ditto can't
+    # exclude, rsync can. The zip is then made from the staged copy.
+    staging = None
+    zip_src = source
+    total_for_zip = total_bytes
+    if excludes:
+        staging = os.path.join(dest, final_name + ".staging")
+        shutil.rmtree(staging, ignore_errors=True)
+        cmd = ["rsync", "-rptW", "--size-only", "--prune-empty-dirs", "--stats"]
+        cmd += [f"--exclude={p}" for p in excludes]
+        cmd += [source, staging + os.sep]
+        with open(err_path, "w") as errf:
+            proc = subprocess.Popen(cmd, stdout=errf, stderr=subprocess.STDOUT)
+            tick = 0
+            while True:
+                try:
+                    rc = proc.wait(timeout=0.5)
+                    break
+                except subprocess.TimeoutExpired:
+                    tick += 1
+                    if tick % 4 == 0:  # walking the staged tree is heavier than a stat — every ~2s
+                        copied = tree_size(staging)
+                        write_progress(slug, {"phase": "copying", "zip": final_name,
+                                              "part_bytes": copied,
+                                              "est_bytes": max(1, total_bytes),
+                                              "pct": min(99, copied * 100 // max(1, total_bytes))})
+        if rc == 24:
+            # Files vanished mid-copy — normal on a live project (lock files
+            # come and go). The copy is otherwise complete.
+            out("note: some files vanished while copying (rsync rc 24) — continuing")
+        elif rc != 0:
+            tail = err_tail()
+            shutil.rmtree(staging, ignore_errors=True)
+            try:
+                os.remove(err_path)
+            except OSError:
+                pass
+            out(f"ERROR: rsync failed (rc {rc}) {tail}")
+            finish(f"error: rsync rc {rc}")
+            return 1
+        zip_src = os.path.join(staging, os.path.basename(source))
+        # Everything excluded / empty source still archives as an empty folder.
+        os.makedirs(zip_src, exist_ok=True)
+        total_for_zip = tree_size(staging)
+
+    # Phase 2: zip with live progress. ditto reports nothing, so watch the
+    # .part file grow and estimate the final size from the last run's
+    # compression ratio (1.0 on a first run — about right for media files;
+    # capped at 99% until the zip is really finished).
     est_ratio = 1.0
     prev = load_state(slug)
     if prev.get("zip_bytes") and prev.get("src_bytes"):
@@ -629,13 +719,12 @@ def _run_job_locked(slug, job, out, finish, started):
             est_ratio = min(1.5, max(0.05, float(prev["zip_bytes"]) / float(prev["src_bytes"])))
         except (TypeError, ValueError, ZeroDivisionError):
             pass
-    est_final = max(1, int(total_bytes * est_ratio))
+    est_final = max(1, int(total_for_zip * est_ratio))
 
     # stderr goes to a file, not a pipe: nobody drains a pipe while we sit in
     # the progress loop, and a full pipe buffer would deadlock ditto.
-    err_path = part + ".err"
     with open(err_path, "w") as errf:
-        proc = subprocess.Popen(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", source, part],
+        proc = subprocess.Popen(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", zip_src, part],
                                 stdout=subprocess.DEVNULL, stderr=errf)
         while True:
             try:
@@ -649,12 +738,10 @@ def _run_job_locked(slug, job, out, finish, started):
                 write_progress(slug, {"phase": "zipping", "zip": final_name,
                                       "part_bytes": part_bytes, "est_bytes": est_final,
                                       "pct": min(99, part_bytes * 100 // est_final)})
+    if staging:
+        shutil.rmtree(staging, ignore_errors=True)
     if rc != 0:
-        try:
-            with open(err_path, "r") as f:
-                tail = " | ".join(f.read().strip().splitlines()[-3:])
-        except OSError:
-            tail = ""
+        tail = err_tail()
         for p in (part, err_path):
             try:
                 os.remove(p)
@@ -688,7 +775,7 @@ def _run_job_locked(slug, job, out, finish, started):
     finish("archived", {"zip": final_name, "zip_bytes": zip_bytes,
                         "kept": len(archives), "deleted": deleted,
                         "snapshot_mtime": newest_mtime,
-                        "src_bytes": total_bytes})  # → next run's progress estimate
+                        "src_bytes": total_for_zip})  # → next run's progress estimate
     return 0
 
 
@@ -753,6 +840,7 @@ def cmd_add(args):
             "dest": dest,
             "schedule": schedule,
             "keep": args.keep,
+            "excludes": [e.strip() for e in (args.exclude or []) if e.strip()],
             "skip_if_unchanged": not args.archive_unchanged,
             "enabled": True,
             "created": now_stamp(),
@@ -817,6 +905,7 @@ def job_json(slug, job, check_launchd=False):
         "schedule": job["schedule"],
         "schedule_human": schedule_human(job["schedule"]),
         "keep": job.get("keep", 10),
+        "excludes": job.get("excludes", []),
         "skip_if_unchanged": job.get("skip_if_unchanged", True),
         "enabled": job.get("enabled", True),
         "status": job_status_word(job),
@@ -1089,6 +1178,10 @@ def build_parser():
                    help="once a month on day 1-31, e.g. --monthly 1 03:00 "
                         "(months without that day are skipped)")
     a.add_argument("--keep", type=int, default=10, help="how many newest zips to keep (default 10)")
+    a.add_argument("--exclude", action="append", default=[], metavar="PATTERN",
+                   help="leave files/folders matching this name pattern out of the archive "
+                        "(repeatable), e.g. --exclude '*.lck' --exclude 'WaveformCache'; "
+                        "runs then stage through rsync before zipping")
     a.add_argument("--archive-unchanged", action="store_true",
                    help="archive every time, even when nothing in the folder changed")
     a.add_argument("--slug", help="explicit job id (default: derived from label)")

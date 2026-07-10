@@ -146,15 +146,16 @@ function render() {
   renderDetail();
 }
 
-// Live progress while a run is writing the zip. pct comes from the engine
-// (part-file size vs estimated final size); no pct yet → indeterminate bar.
+// Live progress while a run is copying/zipping. pct comes from the engine
+// (output size vs estimated final size); no pct yet → indeterminate bar.
 function progressHTML(j) {
   const p = j.progress;
-  if (p && p.phase === "zipping" && p.pct != null) {
+  if (p && p.pct != null && (p.phase === "zipping" || p.phase === "copying")) {
+    const verb = p.phase === "copying" ? "Copying" : "Zipping";
     return (
       `<div class="progress-wrap"><div class="progress-track">` +
       `<div class="progress-fill" style="width:${Math.max(2, p.pct)}%"></div></div>` +
-      `<span class="progress-label">${p.pct}%</span></div>`
+      `<span class="progress-label">${verb} ${p.pct}%</span></div>`
     );
   }
   return (
@@ -233,6 +234,9 @@ function renderDetail() {
     `<div class="k">Saved as</div><div class="v path">YYYY-MM-DD HH.MM.SS ${esc(job.label)}.zip</div>` +
     `<div class="k">Schedule</div><div class="v">${esc(job.schedule_human)}</div>` +
     `<div class="k">Keep newest</div><div class="v">${esc(job.keep)} zips</div>` +
+    (job.excludes && job.excludes.length
+      ? `<div class="k">Excludes</div><div class="v path">${esc(job.excludes.join("  "))}</div>`
+      : "") +
     `<div class="k">Skip unchanged</div><div class="v">${job.skip_if_unchanged ? "yes" : "no"}</div>` +
     `<div class="k">Created</div><div class="v">${esc(job.created || "—")}</div>` +
     `<div class="k">Last run</div><div class="v ${lastRunClass(job)}">${lrDetail}</div>` +
@@ -320,6 +324,7 @@ function openNew(prefillSource) {
   state.labelTouched = false;
   $("in-label").value = "";
   $("in-dest").value = "";
+  $("in-excludes").value = "*.log *.lck ._* SearchData WaveformCache";
   $("in-schedule").value = "1h";
   $("in-time").value = "03:00";
   $("in-weekday").value = "1";
@@ -511,6 +516,8 @@ async function createJob() {
   const payload = { source, dest, keep, archiveUnchanged: $("in-unchanged").checked };
   const label = $("in-label").value.trim();
   if (label) payload.label = label; // engine defaults to the folder name
+  const excludes = $("in-excludes").value.trim().split(/\s+/).filter(Boolean);
+  if (excludes.length) payload.excludes = excludes;
   if (sched === "daily" || sched === "weekly" || sched === "monthly") {
     const t = $("in-time").value;
     if (!/^\d{1,2}:\d{2}$/.test(t)) return newError("Enter a valid time.");
