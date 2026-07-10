@@ -1,7 +1,7 @@
 {
   "name": "folder-archiver-gui",
   "productName": "Folder Archiver",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "GUI for Folder Archiver — zip a folder on a schedule, keep only the newest N zips",
   "main": "main.js",
   "scripts": {
